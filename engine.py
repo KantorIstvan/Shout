@@ -23,6 +23,9 @@ DATA_DIR = os.path.join(os.environ['LOCALAPPDATA'], 'Shout')
 CUDA_DIR = os.path.join(DATA_DIR, 'cuda')
 MODELS_DIR = os.path.join(DATA_DIR, 'models')
 SR = 16000
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
+# faster-whisper keeps only the last max_length // 2 - 1 = 223 prompt tokens; the dictionary must fit in that.
+PROMPT_TOKENS = 223
 
 # CTranslate2 needs only cuBLAS for Whisper (verified: no cuDNN sub-library gets loaded).
 CUBLAS_URL = ('https://files.pythonhosted.org/packages/20/e2/fc9a0e985249d873150276d5afb02e39a66817fe'
@@ -54,6 +57,49 @@ def clean_text(text):
     if not re.search(r'\w', text) or _HALLUCINATION.search(text):
         return ''
     return text
+
+
+def dictionary_prompt(words):
+    """Dictionary terms as one finished sentence, so the dictation still starts with a capital letter."""
+    if isinstance(words, str):  # a bare string would be joined letter by letter
+        words = parse_entries(words)
+    return ', '.join(words) + '.' if words else ''
+
+
+_tokenizer = None
+
+
+def prompt_tokens(words):
+    """Exact token count as faster-whisper sees it (it prepends a space). Whisper's own tokenizer is bundled."""
+    global _tokenizer
+    if not words:
+        return 0
+    if _tokenizer is None:
+        from tokenizers import Tokenizer
+        _tokenizer = Tokenizer.from_file(os.path.join(ASSETS_DIR, 'tokenizer.json'))
+    return len(_tokenizer.encode(' ' + dictionary_prompt(words), add_special_tokens=False).ids)
+
+
+def parse_entries(text):
+    """Split pasted text on newlines, commas and semicolons."""
+    return [' '.join(p.split()) for p in re.split(r'[\n,;]', text) if p.strip()]
+
+
+def add_entries(words, text):
+    """Adds what still fits. Returns (new_words, added, duplicates, rejected)."""
+    words = list(words)
+    seen = {w.casefold() for w in words}
+    added = dup = rejected = 0
+    for entry in parse_entries(text):
+        if entry.casefold() in seen:
+            dup += 1
+        elif prompt_tokens(words + [entry]) <= PROMPT_TOKENS:
+            words.append(entry)
+            seen.add(entry.casefold())
+            added += 1
+        else:
+            rejected += 1
+    return words, added, dup, rejected
 
 
 def _download(url, dest, sha256, progress):
@@ -159,7 +205,7 @@ class Transcriber:
         finally:
             stop.set()
 
-    def transcribe(self, audio, language='auto', hotwords=''):
+    def transcribe(self, audio, language='auto', words=()):
         if len(audio) < SR * 0.3:
             return '', language
         if language == 'auto':
@@ -169,11 +215,9 @@ class Transcriber:
             except Exception:
                 log.exception('Language detection failed, assuming Hungarian')
                 language = 'hu'
-        # Dictionary terms go in as a finished sentence, so the dictation still starts with a capital letter.
-        prompt = ', '.join(w.strip() for w in hotwords.splitlines() if w.strip())
         segments, _ = self.model.transcribe(
             audio, language=language, beam_size=5, vad_filter=True, condition_on_previous_text=False,
-            without_timestamps=True, initial_prompt=prompt + '.' if prompt else None)
+            without_timestamps=True, initial_prompt=dictionary_prompt(words) or None)
         return ' '.join(s.text.strip() for s in segments), language
 
 

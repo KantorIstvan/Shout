@@ -6,15 +6,17 @@ import os
 import time
 from datetime import datetime
 
-from PySide6.QtCore import (QByteArray, QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer,
+from PySide6.QtCore import (QByteArray, QCollator, QEasingCurve, QEvent, QLocale, QPropertyAnimation, QRectF, QSize, Qt, QTimer,
                             QVariantAnimation, Signal)
 from PySide6.QtGui import (QColor, QCursor, QFont, QFontDatabase, QGuiApplication, QIcon, QPainter, QPalette,
                            QPixmap)
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel,
-                               QMainWindow, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
+from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
+                               QToolButton,
+                               QMainWindow, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
                                QStackedWidget, QVBoxLayout, QWidget)
 
+from engine import PROMPT_TOKENS, add_entries, prompt_tokens
 from version import __version__
 
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
@@ -106,9 +108,16 @@ def stylesheet(t, caret_path):
     QComboBox::down-arrow {{ image: url("{caret_path}"); width: 12px; height: 12px; }}
     QComboBox QAbstractItemView {{ background: {t['surface']}; border: 1px solid {t['border']};
         selection-background-color: {t['hover']}; selection-color: {t['text']}; outline: none; padding: 4px; }}
-    QPlainTextEdit {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 8px;
-        padding: 6px 8px; }}
-    QPlainTextEdit:focus {{ border-color: {t['text']}; }}
+    QLineEdit {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 8px; padding: 7px 10px;
+        selection-background-color: {t['text']}; selection-color: {t['bg']}; }}
+    QLineEdit:focus {{ border-color: {t['text']}; }}
+    QLineEdit#inline {{ padding: 3px 6px; }}
+    QPushButton#primary {{ background: {t['text']}; color: {t['bg']}; border: none; border-radius: 8px;
+        padding: 8px 16px; font-weight: 500; }}
+    QPushButton#primary:hover {{ background: {t['muted']}; }}
+    QPushButton#primary:pressed {{ padding-top: 9px; padding-bottom: 7px; }}
+    QToolButton#rowAction {{ border: none; border-radius: 6px; padding: 4px; background: transparent; }}
+    QToolButton#rowAction:hover {{ background: {t['hover']}; }}
     QProgressBar {{ background: {t['border']}; border: none; border-radius: 1px; max-height: 2px; }}
     QProgressBar::chunk {{ background: {t['text']}; border-radius: 1px; }}
     QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
@@ -467,6 +476,7 @@ class HistoryPage(QWidget):
         while self.list.count() > 1:
             w = self.list.takeAt(0).widget()
             if w:
+                w.hide()  # deleteLater only runs on the next event loop pass
                 w.deleteLater()
         self.items = []
         for item in items:  # oldest first
@@ -487,6 +497,233 @@ class HistoryPage(QWidget):
         has = bool(self.items)
         self.stack.setCurrentIndex(1 if has else 0)
         self.hint.setVisible(has)
+
+
+class WordRow(QFrame):
+    def __init__(self, word, page):
+        super().__init__()
+        self.setObjectName('row')
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.word, self.page = word, page
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(10, 4, 4, 4)
+        lay.setSpacing(2)
+        self.text = label(word)
+        self.editor = QLineEdit(word)
+        self.editor.setObjectName('inline')
+        self.editor.hide()
+        self.editor.returnPressed.connect(self._commit)
+        self.editor.installEventFilter(self)
+        lay.addWidget(self.text, 1)
+        lay.addWidget(self.editor, 1)
+        self.actions = []
+        for icon, tip, slot in (('pencil-simple', 'Szerkesztés', self.start_edit),
+                                ('x', 'Törlés', lambda: page.remove(word))):
+            b = QToolButton()
+            b.setObjectName('rowAction')
+            b.setToolTip(tip)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setIcon(QIcon(svg_pixmap(icon, tokens()['muted'], 14)))
+            b.setIconSize(QSize(14, 14))
+            b.clicked.connect(slot)
+            b.setVisible(False)
+            lay.addWidget(b)
+            self.actions.append(b)
+
+    def _hover(self, on):
+        self.setProperty('hover', on)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        for b in self.actions:
+            b.setVisible(on and self.editor.isHidden())
+
+    def enterEvent(self, e):
+        self._hover(True)
+
+    def leaveEvent(self, e):
+        self._hover(False)
+
+    def mouseDoubleClickEvent(self, e):
+        self.start_edit()
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Delete and self.editor.isHidden():
+            self.page.remove(self.word)
+        else:
+            super().keyPressEvent(e)
+
+    def start_edit(self):
+        self.text.hide()
+        for b in self.actions:
+            b.hide()
+        self.editor.setText(self.word)
+        self.editor.show()
+        self.editor.setFocus()
+        self.editor.selectAll()
+
+    def cancel_edit(self):
+        self.editor.hide()
+        self.text.show()
+
+    def _commit(self):
+        if self.page.rename(self.word, self.editor.text()):
+            self.cancel_edit()
+
+    def eventFilter(self, obj, e):
+        if e.type() == QEvent.Type.KeyPress and e.key() == Qt.Key.Key_Escape:
+            self.cancel_edit()
+            return True
+        if e.type() == QEvent.Type.FocusOut and self.editor.isVisible():
+            self.cancel_edit()
+        return False
+
+
+class DictionaryPage(QWidget):
+    """Words Whisper should prefer. Capped at what fits in its prompt (PROMPT_TOKENS), so nothing is silently dropped."""
+    changed = Signal(list)
+
+    def __init__(self, words):
+        super().__init__()
+        self.setObjectName('page')
+        self.words = list(words)
+        self.collator = QCollator(QLocale(QLocale.Language.Hungarian))
+        self.collator.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.collator.setNumericMode(True)  # 'kifejezés 2' before 'kifejezés 10'
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(36, 32, 36, 0)
+        outer.setSpacing(0)
+        outer.addWidget(label('Szótár', 'h1'))
+        outer.addSpacing(6)
+        intro = label('Nevek, szakszavak, márkák, amiket a felismerés előnyben részesít. A Whisper csak korlátozott '
+                      'mennyiséget tud figyelembe venni, ezért a szótár mérete is korlátos.', 'muted', wrap=True)
+        intro.setMaximumWidth(560)
+        outer.addWidget(intro)
+        outer.addSpacing(20)
+
+        add = QHBoxLayout()
+        add.setSpacing(8)
+        self.entry = QLineEdit()
+        self.entry.setPlaceholderText('Új szó vagy kifejezés, többet vesszővel elválasztva is beírhatsz')
+        self.entry.returnPressed.connect(self.add)
+        button = QPushButton('Hozzáadás')
+        button.setObjectName('primary')
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(self.add)
+        add.addWidget(self.entry, 1)
+        add.addWidget(button)
+        outer.addLayout(add)
+        outer.addSpacing(6)
+        self.feedback = label('', 'help', wrap=True)
+        outer.addWidget(self.feedback)
+        outer.addSpacing(14)
+        self.capacity = label('', 'muted', wrap=True)
+        outer.addWidget(self.capacity)
+        outer.addSpacing(6)
+        self.meter = QProgressBar()
+        self.meter.setTextVisible(False)
+        self.meter.setRange(0, PROMPT_TOKENS)
+        outer.addWidget(self.meter)
+        outer.addSpacing(18)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText('Keresés a szótárban')
+        self.search.setClearButtonEnabled(True)
+        self.search_icon = self.search.addAction(QIcon(), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.textChanged.connect(self.refresh)
+        outer.addWidget(self.search)
+        outer.addSpacing(8)
+
+        self.stack = QStackedWidget()
+        empty = QWidget()
+        e = QVBoxLayout(empty)
+        e.setContentsMargins(0, 24, 0, 0)
+        e.addWidget(label('A szótár üres', 'h2'))
+        e.addSpacing(4)
+        e.addWidget(label('Írj be fent egy nevet vagy szakszót, és nyomj Entert.', 'muted'))
+        e.addStretch()
+        self.stack.addWidget(empty)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        host = QWidget()
+        self.list = QVBoxLayout(host)
+        self.list.setContentsMargins(0, 0, 8, 24)
+        self.list.setSpacing(1)
+        self.list.addStretch()
+        scroll.setWidget(host)
+        self.stack.addWidget(scroll)
+        self.no_results = label('', 'muted')
+        self.no_results.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.no_results.setContentsMargins(10, 12, 0, 0)
+        self.stack.addWidget(self.no_results)
+        outer.addWidget(self.stack, 1)
+        self.refresh()
+
+    def refresh(self, *_):
+        self.search_icon.setIcon(QIcon(svg_pixmap('magnifying-glass', tokens()['muted'], 16)))
+        while self.list.count() > 1:
+            w = self.list.takeAt(0).widget()
+            if w:
+                w.hide()  # deleteLater only runs on the next event loop pass
+                w.deleteLater()
+        q = self.search.text().strip().casefold()
+        shown = sorted((w for w in self.words if q in w.casefold()), key=self.collator.sortKey)
+        for i, w in enumerate(shown):
+            self.list.insertWidget(i, WordRow(w, self))
+        if not self.words:
+            self.stack.setCurrentIndex(0)
+        elif not shown:
+            self.no_results.setText(f'Nincs találat erre: „{self.search.text().strip()}”')
+            self.stack.setCurrentIndex(2)
+        else:
+            self.stack.setCurrentIndex(1)
+        used = prompt_tokens(self.words)
+        self.meter.setValue(min(used, PROMPT_TOKENS))
+        if used > PROMPT_TOKENS:  # only possible with a dictionary carried over from version 1.0
+            self.capacity.setText(f'{len(self.words)} szó. A szótár túllépi a keretet, a felismerés csak egy részét '
+                                  'használja. Törölj néhány szót.')
+        else:
+            self.capacity.setText(f'{len(self.words)} szó, a keret {round(used * 100 / PROMPT_TOKENS)}%-a foglalt')
+
+    def _save(self, message):
+        self.feedback.setText(message)
+        self.changed.emit(list(self.words))
+        self.refresh()
+
+    def add(self):
+        words, added, dup, rejected = add_entries(self.words, self.entry.text())
+        if not (added or dup or rejected):
+            return
+        parts = [f'{added} hozzáadva' if added else '', f'{dup} már szerepelt' if dup else '',
+                 f'{rejected} nem fért bele a keretbe' if rejected else '']
+        message = ', '.join(p for p in parts if p) + '.'
+        if rejected:
+            message += ' Törölj szavakat, ha helyet szeretnél.'
+        self.words = words
+        self.entry.clear()
+        self._save(message[0].upper() + message[1:])
+
+    def remove(self, word):
+        self.words.remove(word)
+        self._save(f'Törölve: {word}')
+
+    def rename(self, old, new):
+        new = ' '.join(new.split())
+        if new == old:
+            return True
+        if not new:
+            self.remove(old)
+            return True
+        if any(w.casefold() == new.casefold() for w in self.words if w != old):
+            self.feedback.setText(f'„{new}” már szerepel a szótárban.')
+            return False
+        candidate = [new if w == old else w for w in self.words]
+        if prompt_tokens(candidate) > PROMPT_TOKENS:
+            self.feedback.setText('Így már nem fér bele a keretbe. Rövidítsd, vagy törölj egy másik szót.')
+            return False
+        self.words = candidate
+        self._save(f'Módosítva: {old} → {new}')
+        return True
 
 
 class SettingsPage(QWidget):
@@ -559,15 +796,6 @@ class SettingsPage(QWidget):
         self.model.activated.connect(lambda _: self.changed.emit('model', self.model.currentData()))
         section('Modell', self.model, 'Automatikus: NVIDIA videokártyán large-v3, egyébként large-v3-turbo. '
                                       'Új modell első betöltésekor letöltés indul.')
-
-        self.dictionary = QPlainTextEdit(settings.get('dictionary', ''))
-        self.dictionary.setPlaceholderText('Például:\nKovács Bence\nKubernetes\npull request')
-        self.dictionary.setFixedSize(420, 120)
-        self.dict_timer = QTimer(self, singleShot=True, interval=600,
-                                 timeout=lambda: self.changed.emit('dictionary', self.dictionary.toPlainText()))
-        self.dictionary.textChanged.connect(self.dict_timer.start)
-        section('Szótár', self.dictionary, 'Nevek, szakszavak, márkák, soronként egy. '
-                                           'A felismerés ezeket részesíti előnyben.')
 
         auto = QHBoxLayout()
         auto.setSpacing(12)
@@ -644,7 +872,7 @@ class MainWindow(QMainWindow):
         s.addSpacing(22)
         self.nav_group = QButtonGroup(self)
         self.nav_buttons = []
-        for i, (icon, text) in enumerate((('clock-counter-clockwise', 'Előzmények'), ('gear-six', 'Beállítások'))):
+        for i, (icon, text) in enumerate((('clock-counter-clockwise', 'Előzmények'), ('book-open-text', 'Szótár'), ('gear-six', 'Beállítások'))):
             b = QPushButton(text)
             b.setObjectName('nav')
             b.setCheckable(True)
@@ -675,8 +903,10 @@ class MainWindow(QMainWindow):
 
         self.pages = QStackedWidget()
         self.history = HistoryPage()
+        self.dictionary = DictionaryPage(settings.get('dictionary', []))
         self.settings_page = SettingsPage(settings, list_mics)
         self.pages.addWidget(self.history)
+        self.pages.addWidget(self.dictionary)
         self.pages.addWidget(self.settings_page)
         h.addWidget(self.pages, 1)
         self.nav_group.idClicked.connect(self.pages.setCurrentIndex)
@@ -690,6 +920,8 @@ class MainWindow(QMainWindow):
             ic.addPixmap(svg_pixmap(b.property('icon_name'), t['muted'], 16), QIcon.Mode.Normal, QIcon.State.Off)
             ic.addPixmap(svg_pixmap(b.property('icon_name'), t['text'], 16), QIcon.Mode.Normal, QIcon.State.On)
             b.setIcon(ic)
+        if hasattr(self, 'dictionary'):
+            self.dictionary.refresh()
         if self.isVisible():
             set_dark_titlebar(self, is_dark())
 

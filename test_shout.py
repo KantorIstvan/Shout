@@ -89,3 +89,28 @@ def test_update_versions():
     assert not is_newer('v1.2.0-beta', '1.1.0')
     assert not is_newer('nightly', '1.1.0')
     assert release_url('v1.2.0') == 'https://github.com/KantorIstvan/Shout/releases/tag/v1.2.0'
+
+
+def test_dictionary_entries():
+    from engine import PROMPT_TOKENS, add_entries, dictionary_prompt, parse_entries, prompt_tokens
+    assert parse_entries('Kovács Bence,  pull   request\n\nKubernetes; Letterboxd ') == \
+        ['Kovács Bence', 'pull request', 'Kubernetes', 'Letterboxd']
+    assert dictionary_prompt([]) == '' and prompt_tokens([]) == 0
+    words, added, dup, rejected = add_entries(['Kubernetes'], 'kubernetes, Docker, docker')
+    assert words == ['Kubernetes', 'Docker'] and (added, dup, rejected) == (1, 2, 0)
+    many = '\n'.join(f'Szakkifejezés{i}' for i in range(500))
+    words, added, dup, rejected = add_entries([], many)
+    assert 20 < added < 100 and rejected == 500 - added  # hard limit, nothing beyond the prompt budget
+    assert prompt_tokens(words) <= PROMPT_TOKENS
+
+
+def test_settings_migrates_old_dictionary(tmp_path, monkeypatch):
+    import json
+    import shout
+    f = tmp_path / 'settings.json'
+    f.write_text(json.dumps({'dictionary': 'Kovács Bence\nKubernetes\n\n'}), encoding='utf-8')
+    monkeypatch.setattr(shout, 'SETTINGS_FILE', str(f))
+    assert shout.load_settings()['dictionary'] == ['Kovács Bence', 'Kubernetes']
+def test_prompt_accepts_string():
+    from engine import dictionary_prompt
+    assert dictionary_prompt('Kovács Bence\nKubernetes') == 'Kovács Bence, Kubernetes.'

@@ -14,7 +14,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 import ui
-from engine import DATA_DIR, SR, Recorder, Transcriber, clean_text
+from engine import DATA_DIR, SR, Recorder, Transcriber, clean_text, parse_entries
 from keys import KeyHook, send_ctrl_v, wait_modifiers_released
 from updates import latest_newer_tag, release_url
 
@@ -23,7 +23,7 @@ log = logging.getLogger('shout')
 CONFIG_DIR = os.path.join(os.environ['APPDATA'], 'Shout')
 SETTINGS_FILE = os.path.join(CONFIG_DIR, 'settings.json')
 HISTORY_FILE = os.path.join(CONFIG_DIR, 'history.jsonl')
-DEFAULTS = {'language': 'auto', 'model': 'auto', 'mic': None, 'dictionary': '', 'check_updates': True,
+DEFAULTS = {'language': 'auto', 'model': 'auto', 'mic': None, 'dictionary': [], 'check_updates': True,
             'update_notified': ''}
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 PIPE_NAME = 'Shout-' + os.environ.get('USERNAME', 'user')
@@ -36,7 +36,10 @@ HISTORY_SHOWN = 300
 def load_settings():
     try:
         with open(SETTINGS_FILE, encoding='utf-8') as f:
-            return {**DEFAULTS, **json.load(f)}
+            s = {**DEFAULTS, **json.load(f)}
+        if isinstance(s['dictionary'], str):  # 1.0 stored one newline-separated string
+            s['dictionary'] = parse_entries(s['dictionary'])
+        return s
     except (OSError, ValueError):
         return dict(DEFAULTS)
 
@@ -123,6 +126,7 @@ class Controller(QObject):
         self.window.history.set_items(load_history())
         self.window.settings_page.set_autostart(autostart_enabled())
         self.window.settings_page.changed.connect(self.on_setting)
+        self.window.dictionary.changed.connect(lambda words: self.on_setting('dictionary', words))
         self.window.device_change.connect(lambda: self.device_timer.start())
         self.device_timer = QTimer(self, singleShot=True, interval=1500, timeout=self.refresh_devices)
         self.restore_timer = QTimer(self, singleShot=True, interval=700, timeout=self.restore_clipboard)
