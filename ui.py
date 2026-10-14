@@ -162,6 +162,43 @@ def apply_theme(app, cache_dir):
     app.setStyleSheet(stylesheet(t, caret.replace('\\', '/'), check.replace('\\', '/')))
 
 
+def set_taskbar_identity(widget, app_id, command, name, icon):
+    """Shout.exe is python.org's pythonw.exe, so a taskbar pin would otherwise be called "Python" with Python's icon.
+    These window properties are what Windows uses when the window is pinned."""
+    from ctypes import POINTER, WINFUNCTYPE, Structure, byref, c_ubyte, c_ulong, c_ushort, c_void_p, c_wchar_p
+
+    class GUID(Structure):
+        _fields_ = [('d1', c_ulong), ('d2', c_ushort), ('d3', c_ushort), ('d4', c_ubyte * 8)]
+
+    class PROPERTYKEY(Structure):
+        _fields_ = [('fmtid', GUID), ('pid', c_ulong)]
+
+    class PROPVARIANT(Structure):  # VT_LPWSTR variant, 24 bytes on x64
+        _fields_ = [('vt', c_ushort), ('r1', c_ushort), ('r2', c_ushort), ('r3', c_ushort),
+                    ('value', c_wchar_p), ('pad', c_void_p)]
+
+    def guid(d1, d2, d3, *d4):
+        return GUID(d1, d2, d3, (c_ubyte * 8)(*d4))
+
+    iid_store = guid(0x886D8EEB, 0x8CF2, 0x4446, 0x8D, 0x02, 0xCD, 0xBA, 0x1D, 0xBD, 0xCF, 0x99)
+    fmtid = guid(0x9F4C2855, 0x9F79, 0x4B39, 0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3)  # System.AppUserModel
+    store = c_void_p()
+    if ctypes.windll.shell32.SHGetPropertyStoreForWindow(c_void_p(int(widget.winId())), byref(iid_store),
+                                                          byref(store)) != 0:
+        return False
+    vtbl = ctypes.cast(store, POINTER(POINTER(c_void_p)))[0]
+    set_value = WINFUNCTYPE(ctypes.HRESULT, c_void_p, POINTER(PROPERTYKEY), POINTER(PROPVARIANT))(vtbl[6])
+    commit = WINFUNCTYPE(ctypes.HRESULT, c_void_p)(vtbl[7])
+    release = WINFUNCTYPE(c_ulong, c_void_p)(vtbl[2])
+    try:
+        for pid, value in ((5, app_id), (2, command), (4, name), (3, icon)):  # ID, RelaunchCommand, Name, Icon
+            set_value(store, byref(PROPERTYKEY(fmtid, pid)), byref(PROPVARIANT(31, 0, 0, 0, value, None)))
+        commit(store)
+    finally:
+        release(store)
+    return True
+
+
 def set_dark_titlebar(widget, dark):
     value = ctypes.c_int(1 if dark else 0)
     ctypes.windll.dwmapi.DwmSetWindowAttribute(int(widget.winId()), 20, ctypes.byref(value), 4)

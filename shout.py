@@ -73,11 +73,15 @@ def append_history(item):
         f.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 
-def autostart_command():
-    if os.path.basename(sys.executable).lower() == 'shout.exe':
-        return f'"{sys.executable}" -X tray'  # packaged: Shout.exe is the signed pythonw.exe
+def launch_command(tray=False):
+    if os.path.basename(sys.executable).lower() == 'shout.exe':  # packaged: Shout.exe is the signed pythonw.exe
+        return f'"{sys.executable}"' + (' -X tray' if tray else '')
     pythonw = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
-    return f'"{pythonw}" "{os.path.abspath(__file__)}" --tray'
+    return f'"{pythonw}" "{os.path.abspath(__file__)}"' + (' --tray' if tray else '')
+
+
+def autostart_command():
+    return launch_command(tray=True)
 
 
 def autostart_enabled():
@@ -123,6 +127,8 @@ class Controller(QObject):
         self.pill = ui.Pill()
         self.window = ui.MainWindow(self.settings, Recorder.input_devices)
         self.window.winId()  # native window must exist to receive WM_DEVICECHANGE while hidden
+        ui.set_taskbar_identity(self.window, 'Shout.Shout', launch_command(), 'Shout',
+                                os.path.join(ui.ASSETS, 'shout.ico') + ',0')
         self.window.history.set_items(load_history())
         self.window.settings_page.set_autostart(autostart_enabled())
         self.window.settings_page.changed.connect(self.on_setting)

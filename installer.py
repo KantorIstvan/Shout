@@ -116,6 +116,15 @@ def stop_running_instance(timeout=10.0):
     return False
 
 
+def strip_motw(path):
+    """Remove the 'downloaded from the internet' stream. Explorer copies it onto every file extracted from a downloaded
+    ZIP, and Smart App Control then blocks shortcuts made from those files (e.g. a taskbar pin)."""
+    try:
+        os.remove(path + ':Zone.Identifier')
+    except OSError:
+        pass
+
+
 def install(target, autostart, desktop, progress):
     """Copy this folder to target (unless it already is the target), then register shortcuts, autostart and the
     uninstall entry. Returns True if the installed copy was started and this process should exit."""
@@ -133,6 +142,8 @@ def install(target, autostart, desktop, progress):
             shutil.copy2(f, dst)
             if i % 50 == 0:
                 progress(i / len(files))
+    for f in files:  # copy2 keeps the ZIP's Mark-of-the-Web; installed files must not have it (see strip_motw)
+        strip_motw(os.path.join(target, os.path.relpath(f, src)))
     progress(1.0)
 
     start, desk = _shortcut_paths()
