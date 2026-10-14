@@ -28,7 +28,7 @@ Names and terms Whisper should prefer. Add them one by one, paste a comma or lin
 
 ## Updates
 
-Shout checks the GitHub Releases page on startup and twice a day. If a newer version exists, it shows a tray notification and a link in the sidebar. It never downloads or installs anything by itself: download the new ZIP from the Releases page, extract it and run its `Shout.exe`. Settings, history and models are kept. The check can be switched off in Settings (then the only network use is the first-run model download).
+Shout checks the GitHub Releases page on startup and twice a day. If a newer version exists, it shows a tray notification and a **Frissítés** button in the sidebar. One click downloads the release ZIP, verifies it (GitHub's SHA-256 digest and the PSF signature of `Shout.exe`), installs it over the current copy and restarts Shout. Nothing is downloaded without that click. Settings, history and models are kept. The check can be switched off in Settings (then the only network use is the first-run model download).
 
 To release a new version: bump `version.py`, run `build.ps1`, commit, tag `vX.Y.Z`, push, and attach `Shout-X.Y.Z.zip` to a GitHub Release for that tag.
 

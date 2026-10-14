@@ -3,8 +3,11 @@ import ctypes
 import json
 import logging
 import os
+import shutil
+import subprocess
 import sys
 import threading
+import urllib.error
 import winreg
 from datetime import datetime
 
@@ -13,10 +16,11 @@ from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
+import installer
 import ui
 from engine import DATA_DIR, SR, Recorder, Transcriber, clean_text, parse_entries
 from keys import KeyHook, send_ctrl_v, wait_modifiers_released
-from updates import latest_newer_tag, release_url
+from updates import UPDATE_DIR, download_update, newer_release, release_url
 
 log = logging.getLogger('shout')
 
@@ -113,7 +117,10 @@ class Controller(QObject):
     failed = Signal(str)
     status = Signal(str, str, object)
     loaded = Signal(object)
-    update_found = Signal(str)
+    update_found = Signal(object)
+    update_progress = Signal(float)
+    update_ready = Signal(str)
+    update_failed = Signal(str)
 
     def __init__(self, app, show_window):
         super().__init__()
@@ -143,6 +150,10 @@ class Controller(QObject):
             a = QAction(text, menu)
             a.triggered.connect(slot)
             menu.addAction(a)
+        self.update_action = QAction('Frissítés', menu)
+        self.update_action.triggered.connect(lambda: self.start_update())
+        self.update_action.setVisible(False)
+        menu.addAction(self.update_action)
         menu.addSeparator()
         quit_action = QAction('Kilépés', menu)
         quit_action.triggered.connect(self.quit)
@@ -151,9 +162,16 @@ class Controller(QObject):
         self.tray.activated.connect(lambda r: r == QSystemTrayIcon.ActivationReason.Trigger and self.show_window())
         self.tray.setToolTip('Shout')
         self.tray.show()
-        self.update_tag = None
-        self.tray.messageClicked.connect(lambda: self.update_tag and QDesktopServices.openUrl(QUrl(release_url(self.update_tag))))
+        self.release = None
+        self.updating = False
+        self.tray.messageClicked.connect(lambda: self.release and self.start_update())
         self.update_found.connect(self.on_update)
+        self.update_progress.connect(lambda f: self.window.set_update_progress(f))
+        self.update_ready.connect(self.on_update_ready)
+        self.update_failed.connect(self.on_update_failed)
+        self.window.update_requested.connect(self.start_update)
+        if not installer.packaged() or not installer.app_dir().lower().startswith(UPDATE_DIR.lower()):
+            QTimer.singleShot(60_000, lambda: shutil.rmtree(UPDATE_DIR, ignore_errors=True))  # leftovers of the last update
         self.update_timer = QTimer(self, interval=12 * 3600 * 1000, timeout=self.check_updates)
         QTimer.singleShot(20_000, self.check_updates)  # not during model load
         self.update_timer.start()
@@ -291,21 +309,60 @@ class Controller(QObject):
 
         def work():
             try:
-                tag = latest_newer_tag()
-                if tag:
-                    self.update_found.emit(tag)
+                release = newer_release()
+                if release:
+                    self.update_found.emit(release)
             except Exception as e:  # offline, rate-limited, or no release yet (404): try again later
                 log.info('update check skipped: %s', e)
         threading.Thread(target=work, daemon=True).start()
 
-    def on_update(self, tag):
-        self.update_tag = tag
-        self.window.set_update(tag, release_url(tag))
-        if self.settings['update_notified'] != tag:  # one popup per version, the sidebar link stays
-            self.settings['update_notified'] = tag
+    def on_update(self, release):
+        if self.updating:
+            return
+        self.release = release
+        version = release.tag.lstrip('v')
+        self.window.set_update(version)
+        self.update_action.setText(f'Frissítés: {version}')
+        self.update_action.setVisible(True)
+        if self.settings['update_notified'] != release.tag:  # one popup per version, the sidebar button stays
+            self.settings['update_notified'] = release.tag
             save_settings(self.settings)
-            self.tray.showMessage('Shout frissítés', f'Elérhető a Shout {tag.lstrip("v")}. Kattints a letöltéshez.',
+            self.tray.showMessage('Shout frissítés', f'Elérhető a Shout {version}. Kattints ide a frissítéshez.',
                                   QSystemTrayIcon.MessageIcon.Information, 10000)
+
+    def start_update(self):
+        if self.updating or not self.release:
+            return
+        if not installer.packaged() or not self.release.url:  # running from source, or a release without a ZIP
+            QDesktopServices.openUrl(QUrl(release_url(self.release.tag)))
+            return
+        if self.recorder.active or self.busy:
+            self.pill.show_message('Előbb fejezd be a diktálást')
+            return
+        self.updating = True
+        self.update_action.setEnabled(False)
+        self.window.set_update_progress(0.0)
+        release = self.release
+
+        def work():
+            try:
+                self.update_ready.emit(download_update(release, self.update_progress.emit))
+            except urllib.error.URLError:
+                self.update_failed.emit('A frissítés letöltése nem sikerült. Ellenőrizd az internetkapcsolatot.')
+            except Exception as e:
+                log.exception('update failed')
+                self.update_failed.emit(str(e) or 'A frissítés nem sikerült.')
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_update_ready(self, exe):
+        log.info('update downloaded, handing over to %s', exe)
+        subprocess.Popen([exe, '-X', 'update'], cwd=os.path.dirname(exe), creationflags=0x00000008)  # DETACHED
+        self.quit()
+
+    def on_update_failed(self, message):
+        self.updating = False
+        self.update_action.setEnabled(True)
+        self.window.set_update_error(message)
 
     # misc -------------------------------------------------------------------
     def on_setting(self, key, value):
@@ -366,8 +423,11 @@ def main():
     app.setQuitOnLastWindowClosed(False)
     app.setStyle('Fusion')
 
-    import installer
     if installer.packaged():
+        if 'update' in getattr(sys, '_xoptions', {}):  # started by the running app after downloading a new version
+            ui.load_fonts()
+            ui.apply_theme(app, os.path.join(DATA_DIR, 'cache'))
+            return installer.run_update()
         if 'uninstall' in getattr(sys, '_xoptions', {}):
             ui.load_fonts()
             ui.apply_theme(app, os.path.join(DATA_DIR, 'cache'))

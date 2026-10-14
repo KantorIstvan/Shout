@@ -80,7 +80,6 @@ def stylesheet(t, caret_path, check_path):
         color: {t['muted']}; background: transparent; font-weight: 500; }}
     QPushButton#nav:hover {{ background: {t['hover']}; color: {t['text']}; }}
     QPushButton#nav:checked {{ background: {t['surface']}; color: {t['text']}; border-color: {t['border']}; }}
-    #updateLink {{ font-weight: 500; }}
     #h1 {{ font-size: 22px; font-weight: 600; letter-spacing: -0.4px; }}
     #h2 {{ font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }}
     #label {{ font-weight: 500; }}
@@ -551,17 +550,24 @@ class HistoryPage(QWidget):
 
 
 class WordRow(QFrame):
+    # Fixed geometry: hover and edit states must not change the row size, or every row below would jump.
+    HEIGHT = 36
+
     def __init__(self, word, page):
         super().__init__()
-        self.setObjectName('row')
         self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.setFixedHeight(self.HEIGHT)
+        self.hovered = False
         self.word, self.page = word, page
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(10, 4, 4, 4)
+        lay.setContentsMargins(3, 0, 4, 0)
         lay.setSpacing(2)
         self.text = label(word)
+        self.text.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        self.text.setContentsMargins(9, 0, 0, 0)  # matches the editor's frame and padding: no jump when editing starts
         self.editor = QLineEdit(word)
         self.editor.setObjectName('inline')
+        self.editor.setFixedHeight(28)
         self.editor.hide()
         self.editor.returnPressed.connect(self._commit)
         self.editor.installEventFilter(self)
@@ -576,17 +582,28 @@ class WordRow(QFrame):
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             b.setIcon(QIcon(svg_pixmap(icon, tokens()['muted'], 14)))
             b.setIconSize(QSize(14, 14))
+            b.setFixedSize(26, 26)
             b.clicked.connect(slot)
+            policy = b.sizePolicy()
+            policy.setRetainSizeWhenHidden(True)  # the buttons' space is reserved, so showing them moves nothing
+            b.setSizePolicy(policy)
             b.setVisible(False)
             lay.addWidget(b)
             self.actions.append(b)
 
+    def paintEvent(self, e):
+        if self.hovered or not self.editor.isHidden():
+            p = QPainter(self)
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(tokens()['surface']))
+            p.drawRoundedRect(QRectF(self.rect()), 8, 8)
+
     def _hover(self, on):
-        self.setProperty('hover', on)
-        self.style().unpolish(self)
-        self.style().polish(self)
+        self.hovered = on
         for b in self.actions:
             b.setVisible(on and self.editor.isHidden())
+        self.update()
 
     def enterEvent(self, e):
         self._hover(True)
@@ -615,6 +632,7 @@ class WordRow(QFrame):
     def cancel_edit(self):
         self.editor.hide()
         self.text.show()
+        self._hover(self.underMouse())
 
     def _commit(self):
         if self.page.rename(self.word, self.editor.text()):
@@ -890,8 +908,8 @@ class SettingsPage(QWidget):
         upd.addWidget(label('Frissítések keresése'))
         upd.addStretch()
         section('Frissítések', upd, f'Induláskor és naponta kétszer megnézi a GitHubon, van-e újabb verzió '
-                                    f'(jelenleg {__version__}). Csak értesít, magától nem telepít semmit. '
-                                    'Kikapcsolva az app a modell letöltésén kívül nem használ internetet.')
+                                    f'(jelenleg {__version__}). Ha van, egy kattintással frissíthetsz, magától nem '
+                                    'telepít semmit. Kikapcsolva az app a modell letöltésén kívül nem használ internetet.')
         lay.addStretch()
         scroll.setWidget(host)
         outer = QVBoxLayout(self)
@@ -917,6 +935,7 @@ class SettingsPage(QWidget):
 
 class MainWindow(QMainWindow):
     device_change = Signal()
+    update_requested = Signal()
 
     def __init__(self, settings, list_mics):
         super().__init__()
@@ -965,10 +984,16 @@ class MainWindow(QMainWindow):
         self.progress.setTextVisible(False)
         self.progress.setRange(0, 1000)
         self.progress.hide()
-        self.update_label = label('', 'updateLink')
-        self.update_label.setOpenExternalLinks(True)
-        self.update_label.hide()
-        s.addWidget(self.update_label)
+        self.update_button = QPushButton('')
+        self.update_button.setObjectName('primary')
+        self.update_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_button.clicked.connect(self.update_requested.emit)
+        self.update_button.hide()
+        self.update_note = label('', 'help', wrap=True)
+        self.update_note.hide()
+        s.addWidget(self.update_button)
+        s.addSpacing(4)
+        s.addWidget(self.update_note)
         s.addSpacing(8)
         s.addWidget(self.model_label)
         s.addWidget(self.status_label)
@@ -1000,9 +1025,22 @@ class MainWindow(QMainWindow):
         if self.isVisible():
             set_dark_titlebar(self, is_dark())
 
-    def set_update(self, tag, url):
-        self.update_label.setText(f'<a href="{url}">Új verzió: {tag.lstrip("v")}</a>')
-        self.update_label.show()
+    def set_update(self, version):
+        self.update_button.setText(f'Frissítés: {version}')
+        self.update_button.setEnabled(True)
+        self.update_button.show()
+        self.update_note.setText('Új verzió érhető el. Egy kattintás, a beállításaid megmaradnak.')
+        self.update_note.show()
+
+    def set_update_progress(self, frac):
+        self.update_button.setEnabled(False)
+        self.update_button.setText(f'Letöltés {round(frac * 100)}%')
+        self.update_note.setText('A letöltés után a Shout újraindul az új verzióval.')
+
+    def set_update_error(self, message):
+        self.update_button.setEnabled(True)
+        self.update_button.setText('Újrapróbálás')
+        self.update_note.setText(message)
 
     def set_status(self, model, state, frac=None):
         self.model_label.setText(model)

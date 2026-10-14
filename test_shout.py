@@ -135,3 +135,40 @@ def test_decode_text_encodings():
     words = 'Kovács Bence\r\nŐrség\r\nÜllői út\r\n'
     for data in (words.encode('utf-8'), words.encode('utf-8-sig'), words.encode('utf-16'), words.encode('cp1250')):
         assert parse_entries(decode_text(data)) == ['Kovács Bence', 'Őrség', 'Üllői út']
+
+
+def test_pick_release():
+    from updates import pick_release
+    asset = {'name': 'Shout-1.3.0.zip', 'size': 10, 'digest': 'sha256:ABC',
+             'browser_download_url': 'https://github.com/KantorIstvan/Shout/releases/download/v1.3.0/Shout-1.3.0.zip'}
+    r = pick_release({'tag_name': 'v1.3.0', 'assets': [asset]}, current='1.2.0')
+    assert r.tag == 'v1.3.0' and r.url.endswith('Shout-1.3.0.zip') and r.sha256 == 'abc'
+    assert pick_release({'tag_name': 'v1.2.0', 'assets': [asset]}, current='1.2.0') is None
+    evil = dict(asset, browser_download_url='https://evil.example/Shout-1.3.0.zip')
+    assert pick_release({'tag_name': 'v1.3.0', 'assets': [evil]}, current='1.2.0').url is None  # only our repo
+    assert pick_release({'tag_name': 'v1.3.0', 'assets': []}, current='1.2.0').url is None
+
+
+def test_download_update_verifies(tmp_path):
+    import hashlib, os, pathlib, zipfile
+    import pytest
+    from updates import Release, download_update
+
+    def make_zip(exe_bytes):
+        z = tmp_path / 'Shout-9.9.9.zip'
+        with zipfile.ZipFile(z, 'w') as f:
+            f.writestr('Shout/Shout.exe', exe_bytes)
+            f.writestr('Shout/app/version.py', "__version__ = '9.9.9'")
+        return z, hashlib.sha256(z.read_bytes()).hexdigest()
+
+    z, digest = make_zip(b'not a signed exe')
+    url = pathlib.Path(z).as_uri()
+    with pytest.raises(RuntimeError, match='sérült'):
+        download_update(Release('v9.9.9', url, 0, '0' * 64), lambda f: None, str(tmp_path / 'w1'))
+    with pytest.raises(RuntimeError, match='ellenőrzése'):
+        download_update(Release('v9.9.9', url, 0, digest), lambda f: None, str(tmp_path / 'w2'))
+    signed = pathlib.Path(__file__).parent / 'dist' / 'Shout' / 'Shout.exe'
+    if signed.exists():  # needs a build; the real python.org-signed launcher must pass
+        z, digest = make_zip(signed.read_bytes())
+        exe = download_update(Release('v9.9.9', pathlib.Path(z).as_uri(), 0, digest), lambda f: None, str(tmp_path / 'w3'))
+        assert exe.endswith(os.path.join('v9.9.9', 'Shout', 'Shout.exe')) and os.path.exists(exe)

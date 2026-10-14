@@ -296,6 +296,70 @@ def run_install_dialog():
     return dialog.result_action
 
 
+class UpdateDialog(QDialog):
+    """Shown by `Shout.exe -X update`: installs this downloaded copy over the installed one, no questions asked."""
+    done = Signal(object, bool)
+    progressed = Signal(float)
+
+    def __init__(self, target, autostart, desktop):
+        super().__init__()
+        self.args = (target, autostart, desktop)
+        self.setWindowTitle('Shout')
+        self.setWindowIcon(QIcon(os.path.join(ui.ASSETS, 'shout.ico')))
+        self.setObjectName('page')
+        self.setFixedWidth(420)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(28, 24, 28, 22)
+        lay.setSpacing(0)
+        lay.addWidget(ui.label(f'Shout frissítése: {__version__}', 'h2'))
+        lay.addSpacing(6)
+        self.text = ui.label('Az új verzió települ, utána a Shout magától elindul.', 'muted', wrap=True)
+        lay.addWidget(self.text)
+        lay.addSpacing(16)
+        self.progress = QProgressBar()
+        self.progress.setTextVisible(False)
+        self.progress.setRange(0, 1000)
+        lay.addWidget(self.progress)
+        self.close_button = QPushButton('Bezárás')
+        self.close_button.setObjectName('secondary')
+        self.close_button.clicked.connect(self.reject)
+        self.close_button.hide()
+        lay.addSpacing(14)
+        lay.addWidget(self.close_button, 0, Qt.AlignmentFlag.AlignRight)
+        self.progressed.connect(lambda f: self.progress.setValue(int(f * 1000)))
+        self.done.connect(self.finish)
+
+    def showEvent(self, e):
+        ui.set_dark_titlebar(self, ui.is_dark())
+        super().showEvent(e)
+        if not getattr(self, 'started', False):
+            self.started = True
+
+            def work():
+                try:
+                    self.done.emit(None, install(*self.args, self.progressed.emit))
+                except Exception as exc:
+                    log.exception('update install failed')
+                    self.done.emit(str(exc) or exc.__class__.__name__, False)
+            threading.Thread(target=work, daemon=True).start()
+
+    def finish(self, error, _started):
+        if error is None:
+            self.accept()
+            return
+        self.progress.hide()
+        self.text.setText(f'A frissítés nem sikerült: {error}')
+        self.close_button.show()
+
+
+def run_update():
+    target = installed_location() or DEFAULT_DIR
+    autostart = bool(_reg_value(RUN_KEY, 'Shout'))
+    desktop = os.path.exists(_shortcut_paths()[1])
+    UpdateDialog(resolve_target(target), autostart, desktop).exec()
+    return 0
+
+
 class UninstallDialog(QDialog):
     def __init__(self):
         super().__init__()
