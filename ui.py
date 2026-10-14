@@ -11,12 +11,13 @@ from PySide6.QtCore import (QByteArray, QCollator, QEasingCurve, QEvent, QLocale
 from PySide6.QtGui import (QColor, QCursor, QFont, QFontDatabase, QGuiApplication, QIcon, QPainter, QPalette,
                            QPixmap)
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+                               QLineEdit,
                                QToolButton,
                                QMainWindow, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
                                QStackedWidget, QVBoxLayout, QWidget)
 
-from engine import PROMPT_TOKENS, add_entries, prompt_tokens
+from engine import PROMPT_TOKENS, add_entries, decode_text, prompt_tokens
 from version import __version__
 
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
@@ -616,14 +617,20 @@ class DictionaryPage(QWidget):
         add = QHBoxLayout()
         add.setSpacing(8)
         self.entry = QLineEdit()
-        self.entry.setPlaceholderText('Új szó vagy kifejezés, többet vesszővel elválasztva is beírhatsz')
+        self.entry.setPlaceholderText('Új szó vagy kifejezés')
         self.entry.returnPressed.connect(self.add)
         button = QPushButton('Hozzáadás')
         button.setObjectName('primary')
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.clicked.connect(self.add)
+        import_button = QPushButton('Importálás')
+        import_button.setObjectName('secondary')
+        import_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        import_button.setToolTip('Szövegfájl betöltése, soronként egy szó')
+        import_button.clicked.connect(self.import_file)
         add.addWidget(self.entry, 1)
         add.addWidget(button)
+        add.addWidget(import_button)
         outer.addLayout(add)
         outer.addSpacing(6)
         self.feedback = label('', 'help', wrap=True)
@@ -704,17 +711,35 @@ class DictionaryPage(QWidget):
         self.refresh()
 
     def add(self):
-        words, added, dup, rejected = add_entries(self.words, self.entry.text())
-        if not (added or dup or rejected):
+        self._add_text(self.entry.text())
+        self.entry.clear()
+
+    def import_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, 'Szótár importálása', os.path.expanduser('~'),
+                                              'Szövegfájl (*.txt *.csv);;Minden fájl (*)')
+        if not path:
             return
+        try:
+            with open(path, 'rb') as f:
+                text = decode_text(f.read(2_000_000))
+        except OSError as e:
+            self.feedback.setText(f'A fájl nem olvasható: {e.strerror or e}')
+            return
+        if not self._add_text(text):
+            self.feedback.setText('A fájlban nem találtam szavakat.')
+
+    def _add_text(self, text):
+        words, added, dup, rejected = add_entries(self.words, text)
+        if not (added or dup or rejected):
+            return False
         parts = [f'{added} hozzáadva' if added else '', f'{dup} már szerepelt' if dup else '',
                  f'{rejected} nem fért bele a keretbe' if rejected else '']
         message = ', '.join(p for p in parts if p) + '.'
         if rejected:
             message += ' Törölj szavakat, ha helyet szeretnél.'
         self.words = words
-        self.entry.clear()
         self._save(message[0].upper() + message[1:])
+        return True
 
     def remove(self, word):
         self.words.remove(word)

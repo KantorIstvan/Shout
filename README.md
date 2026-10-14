@@ -22,6 +22,10 @@ Without an NVIDIA GPU it falls back to `large-v3-turbo` on the CPU, which is slo
 
 Why a ZIP and not a setup.exe: an unsigned installer is blocked by Windows Smart App Control with no override. `Shout.exe` itself is signed (see below), so it can install itself even with Smart App Control on.
 
+## Dictionary
+
+Names and terms Whisper should prefer. Add them one by one, paste a comma or line separated list, or use **Importálás** to load a text file with one entry per line (UTF-8, UTF-16 or Windows-1250). The dictionary is capped at what Whisper actually reads (223 prompt tokens, roughly 20 to 90 entries); anything beyond is reported and not added.
+
 ## Updates
 
 Shout checks the GitHub Releases page on startup and twice a day. If a newer version exists, it shows a tray notification and a link in the sidebar. It never downloads or installs anything by itself: download the new ZIP from the Releases page, extract it and run its `Shout.exe`. Settings, history and models are kept. The check can be switched off in Settings (then the only network use is the first-run model download).

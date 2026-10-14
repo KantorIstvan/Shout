@@ -128,3 +128,10 @@ def test_install_target(tmp_path):
     (old / 'Shout.exe').write_text('x')
     assert resolve_target(str(old)) == str(old)  # an existing Shout folder gets updated in place
     assert same_path(str(old), str(old).upper()) and not same_path(str(old), None)
+
+
+def test_decode_text_encodings():
+    from engine import decode_text, parse_entries
+    words = 'Kovács Bence\r\nŐrség\r\nÜllői út\r\n'
+    for data in (words.encode('utf-8'), words.encode('utf-8-sig'), words.encode('utf-16'), words.encode('cp1250')):
+        assert parse_entries(decode_text(data)) == ['Kovács Bence', 'Őrség', 'Üllői út']

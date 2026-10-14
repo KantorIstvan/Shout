@@ -80,6 +80,16 @@ def prompt_tokens(words):
     return len(_tokenizer.encode(' ' + dictionary_prompt(words), add_special_tokens=False).ids)
 
 
+def decode_text(data):
+    """Text files from Notepad, Notepad++ or Excel: UTF-8 (with or without BOM), UTF-16, or the old Hungarian codepage."""
+    if data.startswith((b'\xff\xfe', b'\xfe\xff')):
+        return data.decode('utf-16')
+    try:
+        return data.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return data.decode('cp1250', errors='replace')
+
+
 def parse_entries(text):
     """Split pasted text on newlines, commas and semicolons."""
     return [' '.join(p.split()) for p in re.split(r'[\n,;]', text) if p.strip()]
