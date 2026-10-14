@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QFrame,
                                QMainWindow, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
                                QStackedWidget, QVBoxLayout, QWidget)
 
+from version import __version__
+
 ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 
 # Monochrome tokens. Radius system: containers 12px, controls 8px, switch and overlay pill fully round.
@@ -75,6 +77,7 @@ def stylesheet(t, caret_path):
         color: {t['muted']}; background: transparent; font-weight: 500; }}
     QPushButton#nav:hover {{ background: {t['hover']}; color: {t['text']}; }}
     QPushButton#nav:checked {{ background: {t['surface']}; color: {t['text']}; border-color: {t['border']}; }}
+    #updateLink {{ font-weight: 500; }}
     #h1 {{ font-size: 22px; font-weight: 600; letter-spacing: -0.4px; }}
     #h2 {{ font-size: 15px; font-weight: 600; letter-spacing: -0.2px; }}
     #label {{ font-weight: 500; }}
@@ -129,6 +132,7 @@ def apply_theme(app, cache_dir):
         f.write(svg)
     pal = app.palette()
     pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(t['muted']))  # AA contrast, not the faint grey
+    pal.setColor(QPalette.ColorRole.Link, QColor(t['text']))
     pal.setColor(QPalette.ColorRole.Highlight, QColor(t['text']))
     pal.setColor(QPalette.ColorRole.HighlightedText, QColor(t['bg']))
     app.setPalette(pal)
@@ -573,6 +577,18 @@ class SettingsPage(QWidget):
         auto.addWidget(label('Indítás a Windows-zal'))
         auto.addStretch()
         section('Rendszer', auto, 'Bejelentkezés után a Shout a tálcán vár, ablak nélkül.')
+
+        upd = QHBoxLayout()
+        upd.setSpacing(12)
+        self.updates = Switch()
+        self.updates.setChecked(settings.get('check_updates', True))
+        self.updates.toggled.connect(lambda on: self.changed.emit('check_updates', on))
+        upd.addWidget(self.updates)
+        upd.addWidget(label('Frissítések keresése'))
+        upd.addStretch()
+        section('Frissítések', upd, f'Induláskor és naponta kétszer megnézi a GitHubon, van-e újabb verzió '
+                                    f'(jelenleg {__version__}). Csak értesít, magától nem telepít semmit. '
+                                    'Kikapcsolva az app a modell letöltésén kívül nem használ internetet.')
         lay.addStretch()
         scroll.setWidget(host)
         outer = QVBoxLayout(self)
@@ -646,6 +662,11 @@ class MainWindow(QMainWindow):
         self.progress.setTextVisible(False)
         self.progress.setRange(0, 1000)
         self.progress.hide()
+        self.update_label = label('', 'updateLink')
+        self.update_label.setOpenExternalLinks(True)
+        self.update_label.hide()
+        s.addWidget(self.update_label)
+        s.addSpacing(8)
         s.addWidget(self.model_label)
         s.addWidget(self.status_label)
         s.addSpacing(6)
@@ -671,6 +692,10 @@ class MainWindow(QMainWindow):
             b.setIcon(ic)
         if self.isVisible():
             set_dark_titlebar(self, is_dark())
+
+    def set_update(self, tag, url):
+        self.update_label.setText(f'<a href="{url}">Új verzió: {tag.lstrip("v")}</a>')
+        self.update_label.show()
 
     def set_status(self, model, state, frac=None):
         self.model_label.setText(model)

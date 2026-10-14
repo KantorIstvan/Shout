@@ -77,3 +77,15 @@ def test_esc_when_idle_passes_through():
 def test_no_start_with_extra_modifier():
     h = Hotkey()
     assert run(h, [(0xA0, 1, 0), (VK_LCONTROL, 1, .1), (VK_LWIN, 1, .2)]) == [None, None, None]
+
+
+def test_update_versions():
+    from updates import is_newer, parse_version, release_url
+    assert parse_version('v1.10.0') == (1, 10, 0)
+    assert is_newer('v1.10.0', '1.9.0')  # numeric, not string, comparison
+    assert is_newer('v2.0.0', '1.99.99')
+    assert not is_newer('v1.1.0', '1.1.0')
+    assert not is_newer('v1.0.0', '1.1.0')
+    assert not is_newer('v1.2.0-beta', '1.1.0')
+    assert not is_newer('nightly', '1.1.0')
+    assert release_url('v1.2.0') == 'https://github.com/KantorIstvan/Shout/releases/tag/v1.2.0'

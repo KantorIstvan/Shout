@@ -20,6 +20,12 @@ Without an NVIDIA GPU it falls back to `large-v3-turbo` on the CPU, which is slo
 
 The installer is not code-signed, so SmartScreen shows "Windows protected your PC". Click **More info → Run anyway**.
 
+## Updates
+
+Shout checks the GitHub Releases page on startup and twice a day. If a newer version exists, it shows a tray notification and a link in the sidebar. It never downloads or installs anything by itself: download the new `ShoutSetup.exe` from the Releases page and run it over the old install. Settings, history and models are kept. The check can be switched off in Settings (then the only network use is the first-run model download).
+
+To release a new version: bump `version.py`, run `build.ps1`, commit, tag `vX.Y.Z`, push, and attach `ShoutSetup.exe` to a GitHub Release for that tag.
+
 ## Develop
 
 ```powershell

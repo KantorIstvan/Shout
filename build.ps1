@@ -5,7 +5,7 @@
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $py = Join-Path $root '.venv\Scripts\python.exe'
-$version = '1.0.0'
+$version = ((Get-Content (Join-Path $root 'version.py') -Raw) -replace "(?s).*'([\d.]+)'.*", '$1').Trim()
 $pyver = & $py -c "import platform; print(platform.python_version())"
 $dist = Join-Path $root 'dist\Shout'
 $cache = Join-Path $root 'build'

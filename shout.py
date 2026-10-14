@@ -8,21 +8,23 @@ import threading
 import winreg
 from datetime import datetime
 
-from PySide6.QtCore import QMimeData, QObject, QTimer, Signal
-from PySide6.QtGui import QAction, QGuiApplication, QIcon
+from PySide6.QtCore import QMimeData, QObject, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 import ui
 from engine import DATA_DIR, SR, Recorder, Transcriber, clean_text
 from keys import KeyHook, send_ctrl_v, wait_modifiers_released
+from updates import latest_newer_tag, release_url
 
 log = logging.getLogger('shout')
 
 CONFIG_DIR = os.path.join(os.environ['APPDATA'], 'Shout')
 SETTINGS_FILE = os.path.join(CONFIG_DIR, 'settings.json')
 HISTORY_FILE = os.path.join(CONFIG_DIR, 'history.jsonl')
-DEFAULTS = {'language': 'auto', 'model': 'auto', 'mic': None, 'dictionary': ''}
+DEFAULTS = {'language': 'auto', 'model': 'auto', 'mic': None, 'dictionary': '', 'check_updates': True,
+            'update_notified': ''}
 RUN_KEY = r'Software\Microsoft\Windows\CurrentVersion\Run'
 PIPE_NAME = 'Shout-' + os.environ.get('USERNAME', 'user')
 MUTEX_NAME = 'ShoutSingleInstance'  # also checked by the installer (AppMutex)
@@ -104,6 +106,7 @@ class Controller(QObject):
     failed = Signal(str)
     status = Signal(str, str, object)
     loaded = Signal(object)
+    update_found = Signal(str)
 
     def __init__(self, app, show_window):
         super().__init__()
@@ -138,6 +141,12 @@ class Controller(QObject):
         self.tray.activated.connect(lambda r: r == QSystemTrayIcon.ActivationReason.Trigger and self.show_window())
         self.tray.setToolTip('Shout')
         self.tray.show()
+        self.update_tag = None
+        self.tray.messageClicked.connect(lambda: self.update_tag and QDesktopServices.openUrl(QUrl(release_url(self.update_tag))))
+        self.update_found.connect(self.on_update)
+        self.update_timer = QTimer(self, interval=12 * 3600 * 1000, timeout=self.check_updates)
+        QTimer.singleShot(20_000, self.check_updates)  # not during model load
+        self.update_timer.start()
 
         self.recorder = Recorder(on_level=self.level.emit)
         self.hotkey.connect(self.on_hotkey)
@@ -265,6 +274,29 @@ class Controller(QObject):
             cb.clear()
         self.saved_clipboard = None
 
+    # updates ----------------------------------------------------------------
+    def check_updates(self):
+        if not self.settings['check_updates']:
+            return
+
+        def work():
+            try:
+                tag = latest_newer_tag()
+                if tag:
+                    self.update_found.emit(tag)
+            except Exception as e:  # offline, rate-limited, or no release yet (404): try again later
+                log.info('update check skipped: %s', e)
+        threading.Thread(target=work, daemon=True).start()
+
+    def on_update(self, tag):
+        self.update_tag = tag
+        self.window.set_update(tag, release_url(tag))
+        if self.settings['update_notified'] != tag:  # one popup per version, the sidebar link stays
+            self.settings['update_notified'] = tag
+            save_settings(self.settings)
+            self.tray.showMessage('Shout frissítés', f'Elérhető a Shout {tag.lstrip("v")}. Kattints a letöltéshez.',
+                                  QSystemTrayIcon.MessageIcon.Information, 10000)
+
     # misc -------------------------------------------------------------------
     def on_setting(self, key, value):
         if key == 'autostart':
@@ -272,6 +304,8 @@ class Controller(QObject):
             return
         self.settings[key] = value
         save_settings(self.settings)
+        if key == 'check_updates' and value:
+            self.check_updates()
         if key == 'model':
             self.load_model()
 
