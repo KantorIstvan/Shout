@@ -1,4 +1,4 @@
-# Builds dist\Shout (the app) and ShoutSetup.exe (the installer, in the project root).
+# Builds dist\Shout (the app) and Shout-<version>.zip (what users download, in the project root).
 #
 # Shout.exe is python.org's Authenticode-signed pythonw.exe, renamed. A PyInstaller bootloader would be
 # an unsigned exe, which Smart App Control blocks with no override; the signed runtime runs everywhere.
@@ -62,10 +62,11 @@ Copy-Item -Recurse (Join-Path $root 'assets') $app
 $size = (Get-ChildItem $dist -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
 Write-Host ("dist\Shout: {0:N0} MB" -f $size)
 
-# 4. Installer -------------------------------------------------------------------------------------
-$iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") |
-    Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $iscc) { Write-Warning 'Inno Setup 6 not found, skipping installer (winget install -e --id JRSoftware.InnoSetup)'; exit 0 }
-& $iscc /Q "/DAppVersion=$version" (Join-Path $root 'build-installer.iss')
-if ($LASTEXITCODE) { throw 'ISCC failed' }
-Write-Host 'ShoutSetup.exe built'
+# 4. ZIP for distribution -------------------------------------------------------------------------
+# No setup.exe on purpose: an unsigned installer is blocked by Smart App Control. Shout.exe installs itself
+# when started from the extracted folder (installer.py).
+$zipBase = Join-Path $root "Shout-$version"
+Remove-Item "$zipBase.zip" -ErrorAction SilentlyContinue
+& $py -c "import shutil, sys; shutil.make_archive(sys.argv[1], 'zip', sys.argv[2], 'Shout')" $zipBase (Join-Path $root 'dist')
+if ($LASTEXITCODE) { throw 'zip failed' }
+Write-Host ("Shout-$version.zip: {0:N0} MB" -f ((Get-Item "$zipBase.zip").Length / 1MB))

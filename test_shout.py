@@ -114,3 +114,17 @@ def test_settings_migrates_old_dictionary(tmp_path, monkeypatch):
 def test_prompt_accepts_string():
     from engine import dictionary_prompt
     assert dictionary_prompt('Kovács Bence\nKubernetes') == 'Kovács Bence, Kubernetes.'
+
+
+def test_install_target(tmp_path):
+    from installer import resolve_target, same_path
+    assert resolve_target(str(tmp_path / 'new')) == str(tmp_path / 'new')  # missing folder: used as is
+    busy = tmp_path / 'Downloads'
+    busy.mkdir()
+    (busy / 'photo.jpg').write_text('x')
+    assert resolve_target(str(busy)) == str(busy / 'Shout')  # never spill into a folder with other files
+    old = tmp_path / 'OldShout'
+    old.mkdir()
+    (old / 'Shout.exe').write_text('x')
+    assert resolve_target(str(old)) == str(old)  # an existing Shout folder gets updated in place
+    assert same_path(str(old), str(old).upper()) and not same_path(str(old), None)

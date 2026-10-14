@@ -10,7 +10,9 @@ Offline voice dictation for Windows, inspired by WisprFlow. Hold **Ctrl+Win**, s
 
 ## Install
 
-Run `ShoutSetup.exe` (project root). By default it installs for the current user only, with no admin rights, to `%LOCALAPPDATA%\Programs\Shout`; the wizard can also install for all users or into another folder.
+Download `Shout-<version>.zip` from the [Releases](https://github.com/KantorIstvan/Shout/releases) page, extract it, and double-click `Shout.exe`. It offers to install itself (default folder: `%LOCALAPPDATA%\Programs\Shout`, no admin rights needed), with a Start menu entry, optional autostart and desktop icon. It also adds an entry to Windows' Apps list, where you can uninstall it. **Csak most futtatom** runs it from the extracted folder without installing.
+
+To update, extract the new ZIP and run its `Shout.exe`. It replaces the installed copy and keeps your settings, history and models.
 
 On first launch Shout downloads:
 - the Whisper model (about 3 GB)
@@ -18,13 +20,13 @@ On first launch Shout downloads:
 
 Without an NVIDIA GPU it falls back to `large-v3-turbo` on the CPU, which is slower but works.
 
-The installer is not code-signed, so SmartScreen shows "Windows protected your PC". Click **More info → Run anyway**.
+Why a ZIP and not a setup.exe: an unsigned installer is blocked by Windows Smart App Control with no override. `Shout.exe` itself is signed (see below), so it can install itself even with Smart App Control on.
 
 ## Updates
 
-Shout checks the GitHub Releases page on startup and twice a day. If a newer version exists, it shows a tray notification and a link in the sidebar. It never downloads or installs anything by itself: download the new `ShoutSetup.exe` from the Releases page and run it over the old install. Settings, history and models are kept. The check can be switched off in Settings (then the only network use is the first-run model download).
+Shout checks the GitHub Releases page on startup and twice a day. If a newer version exists, it shows a tray notification and a link in the sidebar. It never downloads or installs anything by itself: download the new ZIP from the Releases page, extract it and run its `Shout.exe`. Settings, history and models are kept. The check can be switched off in Settings (then the only network use is the first-run model download).
 
-To release a new version: bump `version.py`, run `build.ps1`, commit, tag `vX.Y.Z`, push, and attach `ShoutSetup.exe` to a GitHub Release for that tag.
+To release a new version: bump `version.py`, run `build.ps1`, commit, tag `vX.Y.Z`, push, and attach `Shout-X.Y.Z.zip` to a GitHub Release for that tag.
 
 ## Develop
 
@@ -33,7 +35,7 @@ python -m venv .venv
 .venv\Scripts\pip install --no-deps -r requirements.txt pytest
 .venv\Scripts\python -m pytest test_shout.py   # hotkey state machine, language pick, hallucination filter
 .venv\Scripts\python shout.py                  # run from source
-powershell -ExecutionPolicy Bypass -File build.ps1   # dist\Shout + ShoutSetup.exe (needs Inno Setup 6)
+powershell -ExecutionPolicy Bypass -File build.ps1   # dist\Shout + Shout-<version>.zip
 ```
 
 | File | Role |
@@ -42,6 +44,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1   # dist\Shout + ShoutSetup.e
 | `keys.py` | Ctrl+Win state machine, low-level keyboard hook, Ctrl+V injection |
 | `ui.py` | Overlay pill, main window, theme |
 | `shout.py` | Wiring, tray icon, settings and history storage |
+| `installer.py` | Self-install, update and uninstall of the packaged `Shout.exe` |
 | `make_icon.py` | Regenerates `assets/shout.ico` |
 
 ## Why there is no PyInstaller

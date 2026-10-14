@@ -68,7 +68,7 @@ def tokens():
     return DARK if is_dark() else LIGHT
 
 
-def stylesheet(t, caret_path):
+def stylesheet(t, caret_path, check_path):
     return f"""
     QWidget {{ color: {t['text']}; font-family: "Geist"; font-size: 13px; }}
     QMainWindow, #content, #page, QScrollArea, QScrollArea > QWidget > QWidget {{ background: {t['bg']}; }}
@@ -116,6 +116,14 @@ def stylesheet(t, caret_path):
         padding: 8px 16px; font-weight: 500; }}
     QPushButton#primary:hover {{ background: {t['muted']}; }}
     QPushButton#primary:pressed {{ padding-top: 9px; padding-bottom: 7px; }}
+    QPushButton#secondary {{ background: transparent; color: {t['text']}; border: 1px solid {t['border']};
+        border-radius: 8px; padding: 7px 14px; font-weight: 500; }}
+    QPushButton#secondary:hover {{ background: {t['hover']}; }}
+    QPushButton:disabled {{ background: {t['border']}; color: {t['muted']}; border-color: {t['border']}; }}
+    QCheckBox {{ spacing: 10px; }}
+    QCheckBox::indicator {{ width: 16px; height: 16px; border: 1px solid {t['faint']}; border-radius: 4px;
+        background: {t['surface']}; }}
+    QCheckBox::indicator:checked {{ background: {t['text']}; border-color: {t['text']}; image: url("{check_path}"); }}
     QToolButton#rowAction {{ border: none; border-radius: 6px; padding: 4px; background: transparent; }}
     QToolButton#rowAction:hover {{ background: {t['hover']}; }}
     QProgressBar {{ background: {t['border']}; border: none; border-radius: 1px; max-height: 2px; }}
@@ -139,13 +147,18 @@ def apply_theme(app, cache_dir):
         svg = f.read().replace('currentColor', t['muted'])
     with open(caret, 'w', encoding='utf-8') as f:
         f.write(svg)
+    check = os.path.join(cache_dir, f"check-{t['bg'][1:]}.svg")
+    with open(os.path.join(ASSETS, 'icons', 'check.svg'), encoding='utf-8') as f:
+        svg = f.read().replace('currentColor', t['bg'])
+    with open(check, 'w', encoding='utf-8') as f:
+        f.write(svg)
     pal = app.palette()
     pal.setColor(QPalette.ColorRole.PlaceholderText, QColor(t['muted']))  # AA contrast, not the faint grey
     pal.setColor(QPalette.ColorRole.Link, QColor(t['text']))
     pal.setColor(QPalette.ColorRole.Highlight, QColor(t['text']))
     pal.setColor(QPalette.ColorRole.HighlightedText, QColor(t['bg']))
     app.setPalette(pal)
-    app.setStyleSheet(stylesheet(t, caret.replace('\\', '/')))
+    app.setStyleSheet(stylesheet(t, caret.replace('\\', '/'), check.replace('\\', '/')))
 
 
 def set_dark_titlebar(widget, dark):

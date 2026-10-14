@@ -3,4 +3,5 @@ dist/
 build/
 __pycache__/
 /ShoutSetup.exe
+/Shout-*.zip
 docs/private/

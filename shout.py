@@ -360,6 +360,18 @@ def main():
     app.setQuitOnLastWindowClosed(False)
     app.setStyle('Fusion')
 
+    import installer
+    if installer.packaged():
+        if 'uninstall' in getattr(sys, '_xoptions', {}):
+            ui.load_fonts()
+            ui.apply_theme(app, os.path.join(DATA_DIR, 'cache'))
+            return installer.uninstall()
+        if installer.needs_install():  # started from an extracted ZIP: offer to install or update
+            ui.load_fonts()
+            ui.apply_theme(app, os.path.join(DATA_DIR, 'cache'))
+            if installer.run_install_dialog() != 'portable':
+                return 0
+
     sock = QLocalSocket()
     sock.connectToServer(PIPE_NAME)
     if sock.waitForConnected(300):  # already running: bring its window up instead
@@ -378,7 +390,15 @@ def main():
     if first_run:
         save_settings(DEFAULTS)
     controller = Controller(app, show_window=first_run or not tray_mode)
-    server.newConnection.connect(lambda: (server.nextPendingConnection(), controller.show_window()))
+
+    def on_connection():
+        conn = server.nextPendingConnection()
+        conn.waitForReadyRead(300)
+        if bytes(conn.readAll()) == b'quit':  # the installer is replacing this copy
+            controller.quit()
+        else:
+            controller.show_window()
+    server.newConnection.connect(on_connection)
     log.info('Shout started (tray=%s, first_run=%s)', tray_mode, first_run)
     return app.exec()
 

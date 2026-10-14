@@ -52,7 +52,7 @@ Revised during implementation, because Smart App Control is enforced on the targ
 - onnxruntime dev tools are pruned (they exceed MAX_PATH).
 - Only cuBLAS is downloaded on first run. cuDNN turned out to be unused by CTranslate2 Whisper (verified by in-process module enumeration).
 - Icon: off-black rounded square with white waveform bars (3 bars at 16 to 24 px, 5 bars from 32 px), pixel-snapped up to 48 px, faint light edge for dark taskbars.
-- Inno Setup `ShoutSetup.exe` (about 64 MB): per-user install (no admin rights), Hungarian/English wizard, Start menu entry, optional desktop icon, optional autostart. The uninstaller asks whether to delete models and data. Unsigned, so SmartScreen will warn; locally built, it is not blocked by Smart App Control.
+- Distribution is `Shout-<version>.zip` (about 106 MB). Inno Setup was dropped in 1.1.1: Smart App Control started blocking the unsigned setup.exe (the 1.0 build had been allowed). Started from an extracted folder, `Shout.exe` shows an install/update dialog (`installer.py`): folder picker, autostart, desktop icon. It copies itself, creates shortcuts, adds an HKCU Apps entry, and registers `Shout.exe -X uninstall` as the uninstaller (which deletes its own folder after exit via cmd). Verified with Mark-of-the-Web on every extracted file: no Smart App Control blocks.
 
 ## Out of scope (MVP)
 
